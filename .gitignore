@@ -8,3 +8,9 @@ frontend/node_modules/
 dist/
 .env
 .env.local
+# Ignore Terraform local state, cache, and provider binaries
+.terraform/
+*.tfstate
+*.tfstate.*
+.terraform.lock.hcl
+crash.log
