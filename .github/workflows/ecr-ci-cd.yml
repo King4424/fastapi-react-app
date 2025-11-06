@@ -1,0 +1,47 @@
+name: CI/CD - Build & Push to AWS ECR
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      # --- Backend image build and push ---
+      - name: Build, tag, and push backend image
+        env:
+          ECR_REPO: ${{ secrets.ECR_BACKEND_REPO }}
+        run: |
+          docker build -t backend ./backend
+          docker tag backend:latest $ECR_REPO:latest
+          docker push $ECR_REPO:latest
+
+      # --- Frontend image build and push ---
+      - name: Build, tag, and push frontend image
+        env:
+          ECR_REPO: ${{ secrets.ECR_FRONTEND_REPO }}
+        run: |
+          docker build -t frontend ./frontend
+          docker tag frontend:latest $ECR_REPO:latest
+          docker push $ECR_REPO:latest
+
+      - name: Confirm success
+        run: echo "✅ Docker images for backend and frontend pushed to ECR successfully!"
