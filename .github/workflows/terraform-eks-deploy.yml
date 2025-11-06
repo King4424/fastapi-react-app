@@ -30,7 +30,7 @@ jobs:
         with:
           terraform_version: 1.9.5
 
-      # 3️⃣ Configure AWS credentials (use your secrets)
+      # 3️⃣ Configure AWS credentials
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
@@ -53,25 +53,25 @@ jobs:
         working-directory: ${{ env.TF_WORKING_DIR }}
         run: terraform plan -out=tfplan
 
-      # 7️⃣ Terraform Apply (auto-approve for CI/CD)
+      # 7️⃣ Terraform Apply (auto-approve)
       - name: Terraform Apply
         working-directory: ${{ env.TF_WORKING_DIR }}
         run: terraform apply -auto-approve tfplan
 
-      # 8️⃣ Export Kubeconfig for future steps
+      # 8️⃣ Export Kubeconfig for next job
       - name: Export Kubeconfig
         run: |
-           aws eks update-kubeconfig --region ap-south-1 --name fastapi-react-eks
+          mkdir -p ~/.kube
+          aws eks update-kubeconfig --region ${{ env.AWS_REGION }} --name fastapi-react-eks
 
-
-      # 9️⃣ Upload kubeconfig as artifact (optional)
+      # 9️⃣ Upload kubeconfig as artifact
       - name: Upload kubeconfig
         uses: actions/upload-artifact@v4
         with:
           name: kubeconfig
           path: ~/.kube/config
 
-  # 🔁 Optional — deploy Kubernetes manifests once EKS is ready
+  # 🔁 Deploy application to EKS
   deploy-app:
     name: Deploy FastAPI & React to EKS
     runs-on: ubuntu-latest
@@ -86,21 +86,45 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # 2️⃣ Download kubeconfig artifact from previous job
+      # 2️⃣ Download kubeconfig artifact
       - name: Download kubeconfig
         uses: actions/download-artifact@v4
         with:
           name: kubeconfig
           path: ~/.kube
 
-      # 3️⃣ Configure kubectl
+      # 3️⃣ Setup kubectl
       - name: Setup kubectl
         uses: azure/setup-kubectl@v4
         with:
           version: v1.30.0
 
-      # 4️⃣ Deploy Kubernetes manifests
+      # 4️⃣ Verify Kubernetes connection
+      - name: Verify EKS Connection
+        run: |
+          kubectl version --client
+          kubectl get nodes
+
+      # 5️⃣ Debug: Ensure k8s folder exists
+      - name: Check Kubernetes manifests folder
+        run: |
+          echo "Listing repository structure..."
+          ls -R
+          if [ ! -d "./k8s" ]; then
+            echo "❌ ERROR: k8s directory not found!"
+            exit 1
+          fi
+          echo "✅ k8s directory found."
+
+      # 6️⃣ Apply Kubernetes manifests
       - name: Apply Kubernetes manifests
         run: |
-          kubectl apply -f k8s/
+          echo "🚀 Applying Kubernetes manifests..."
+          kubectl apply -f ./k8s/
+          echo "✅ All Kubernetes manifests applied successfully!"
+
+      # 7️⃣ Verify deployments and services
+      - name: Verify deployed resources
+        run: |
           kubectl get pods -A
+          kubectl get svc -A
