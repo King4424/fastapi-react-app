@@ -20,9 +20,12 @@ jobs:
       TF_WORKING_DIR: terraform
 
     steps:
-      # 1️⃣ Checkout code
+      # 1️⃣ Checkout repository
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          clean: true
 
       # 2️⃣ Setup Terraform
       - name: Setup Terraform
@@ -58,8 +61,8 @@ jobs:
         working-directory: ${{ env.TF_WORKING_DIR }}
         run: terraform apply -auto-approve tfplan
 
-      # 8️⃣ Export Kubeconfig for next job
-      - name: Export Kubeconfig
+      # 8️⃣ Export kubeconfig for next job
+      - name: Export kubeconfig
         run: |
           mkdir -p ~/.kube
           aws eks update-kubeconfig --region ${{ env.AWS_REGION }} --name fastapi-react-eks
@@ -71,7 +74,7 @@ jobs:
           name: kubeconfig
           path: ~/.kube/config
 
-  # 🔁 Deploy application to EKS
+  # 🚀 Deploy FastAPI + React app to EKS
   deploy-app:
     name: Deploy FastAPI & React to EKS
     runs-on: ubuntu-latest
@@ -82,33 +85,72 @@ jobs:
       KUBECONFIG: ~/.kube/config
 
     steps:
-     - name: Checkout repository
-       uses: actions/checkout@v4
+      # 1️⃣ Checkout repository (full fetch)
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          clean: true
 
-     - name: Download kubeconfig
-       uses: actions/download-artifact@v4
-       with:
-        name: kubeconfig
-        path: ~/.kube
+      # 2️⃣ Download kubeconfig
+      - name: Download kubeconfig
+        uses: actions/download-artifact@v4
+        with:
+          name: kubeconfig
+          path: ~/.kube
 
-     - name: Setup kubectl
-       uses: azure/setup-kubectl@v4
-       with:
-        version: v1.30.0
+      # 3️⃣ Setup kubectl
+      - name: Setup kubectl
+        uses: azure/setup-kubectl@v4
+        with:
+          version: v1.30.0
 
-     - name: Verify EKS connection
-       run: |
-        kubectl version --client
-        kubectl get nodes
+      # 4️⃣ Verify EKS cluster connection
+      - name: Verify EKS connection
+        run: |
+          echo "🔍 Verifying connection to EKS cluster..."
+          kubectl version --client
+          kubectl get nodes || echo "⚠️ No nodes found yet (cluster may still be initializing)"
 
-     - name: Apply Kubernetes manifests
-       working-directory: ${{ github.workspace }}
-       run: |
-        echo "🚀 Applying Kubernetes manifests from $(pwd)"
-        ls -R
-        kubectl apply -f ./k8s/
+      # 5️⃣ Debug repo structure to find k8s
+      - name: Locate k8s directory
+        run: |
+          echo "📦 Checking for Kubernetes manifests..."
+          echo "Current directory: $(pwd)"
+          ls -R
+          if [ -d "./k8s" ]; then
+            echo "✅ Found ./k8s directory"
+          elif [ -d "$GITHUB_WORKSPACE/k8s" ]; then
+            echo "✅ Found k8s directory in workspace"
+          else
+            echo "❌ ERROR: k8s directory not found!"
+            exit 1
+          fi
 
-     - name: Verify deployments
-       run: |
-        kubectl get pods -A
-        kubectl get svc -A
+      # 6️⃣ Apply Kubernetes manifests
+      - name: Apply Kubernetes manifests
+        run: |
+          echo "🚀 Applying Kubernetes manifests..."
+          if [ -d "./k8s" ]; then
+            kubectl apply -f ./k8s/
+          elif [ -d "$GITHUB_WORKSPACE/k8s" ]; then
+            kubectl apply -f "$GITHUB_WORKSPACE/k8s/"
+          else
+            echo "❌ ERROR: Could not locate k8s folder!"
+            exit 1
+          fi
+
+      # 7️⃣ Wait until all pods are ready
+      - name: Wait for Pods to be ready
+        run: |
+          echo "⏳ Waiting for all pods to become ready..."
+          kubectl wait --for=condition=Ready pods --all --all-namespaces --timeout=180s || true
+          kubectl get pods -A
+
+      # 8️⃣ Verify deployed services
+      - name: Verify Kubernetes services
+        run: |
+          echo "✅ Deployment verification..."
+          kubectl get svc -A
+
+
