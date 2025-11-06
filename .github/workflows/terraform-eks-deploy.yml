@@ -82,49 +82,33 @@ jobs:
       KUBECONFIG: ~/.kube/config
 
     steps:
-      # 1️⃣ Checkout code
-      - name: Checkout repository
-        uses: actions/checkout@v4
+     - name: Checkout repository
+       uses: actions/checkout@v4
 
-      # 2️⃣ Download kubeconfig artifact
-      - name: Download kubeconfig
-        uses: actions/download-artifact@v4
-        with:
-          name: kubeconfig
-          path: ~/.kube
+     - name: Download kubeconfig
+       uses: actions/download-artifact@v4
+       with:
+        name: kubeconfig
+        path: ~/.kube
 
-      # 3️⃣ Setup kubectl
-      - name: Setup kubectl
-        uses: azure/setup-kubectl@v4
-        with:
-          version: v1.30.0
+     - name: Setup kubectl
+       uses: azure/setup-kubectl@v4
+       with:
+        version: v1.30.0
 
-      # 4️⃣ Verify Kubernetes connection
-      - name: Verify EKS Connection
-        run: |
-          kubectl version --client
-          kubectl get nodes
+     - name: Verify EKS connection
+       run: |
+        kubectl version --client
+        kubectl get nodes
 
-      # 5️⃣ Debug: Ensure k8s folder exists
-      - name: Check Kubernetes manifests folder
-        run: |
-          echo "Listing repository structure..."
-          ls -R
-          if [ ! -d "./k8s" ]; then
-            echo "❌ ERROR: k8s directory not found!"
-            exit 1
-          fi
-          echo "✅ k8s directory found."
+     - name: Apply Kubernetes manifests
+       working-directory: ${{ github.workspace }}
+       run: |
+        echo "🚀 Applying Kubernetes manifests from $(pwd)"
+        ls -R
+        kubectl apply -f ./k8s/
 
-      # 6️⃣ Apply Kubernetes manifests
-      - name: Apply Kubernetes manifests
-        run: |
-          echo "🚀 Applying Kubernetes manifests..."
-          kubectl apply -f ./k8s/
-          echo "✅ All Kubernetes manifests applied successfully!"
-
-      # 7️⃣ Verify deployments and services
-      - name: Verify deployed resources
-        run: |
-          kubectl get pods -A
-          kubectl get svc -A
+     - name: Verify deployments
+       run: |
+        kubectl get pods -A
+        kubectl get svc -A
