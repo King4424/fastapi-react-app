@@ -36,7 +36,7 @@ default = 2
 
 variable "node_instance_type" {
 type = string
-default = "t2.large"
+default = "t2.medium"
 }
 
 
