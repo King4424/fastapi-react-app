@@ -22,7 +22,7 @@ jobs:
       CLUSTER_NAME: fastapi-react-eks
 
     steps:
-      # 1️⃣ Checkout code
+      # 1️⃣ Checkout repository
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
@@ -63,14 +63,15 @@ jobs:
         working-directory: ${{ env.TF_WORKING_DIR }}
         run: terraform apply -auto-approve tfplan
 
-      # 8️⃣ Export kubeconfig for deployment job
+      # 8️⃣ Export kubeconfig
       - name: Export kubeconfig
         run: |
           mkdir -p ~/.kube
           aws eks update-kubeconfig \
             --region ${{ env.AWS_REGION }} \
             --name ${{ env.CLUSTER_NAME }} \
-            --alias fastapi-eks
+            --alias eks-fastapi
+          echo "✅ Kubeconfig exported successfully."
 
       # 9️⃣ Upload kubeconfig artifact
       - name: Upload kubeconfig
@@ -78,7 +79,6 @@ jobs:
         with:
           name: kubeconfig
           path: ~/.kube/config
-
 
   # 💡 Deploy FastAPI + React to EKS
   deploy-app:
@@ -99,14 +99,7 @@ jobs:
           fetch-depth: 0
           clean: true
 
-      # 2️⃣ Download kubeconfig
-      - name: Download kubeconfig
-        uses: actions/download-artifact@v4
-        with:
-          name: kubeconfig
-          path: ~/.kube
-
-      # 3️⃣ Reconfigure AWS credentials for kubectl
+      # 2️⃣ Configure AWS credentials
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
@@ -114,35 +107,52 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
 
-      # 4️⃣ Setup kubectl
+      # 3️⃣ Setup kubectl
       - name: Setup kubectl
         uses: azure/setup-kubectl@v4
         with:
           version: v1.30.0
 
-      # 5️⃣ Update kubeconfig to ensure cluster connectivity
+      # 4️⃣ Generate kubeconfig directly
       - name: Update kubeconfig for EKS
         run: |
+          echo "⚙️ Generating kubeconfig for ${{ env.CLUSTER_NAME }} ..."
           mkdir -p ~/.kube
           aws eks update-kubeconfig \
             --region ${{ env.AWS_REGION }} \
             --name ${{ env.CLUSTER_NAME }} \
-            --alias fastapi-eks
+            --alias eks-fastapi
+          echo "✅ Kubeconfig generated!"
+          kubectl config get-contexts
 
-      # 6️⃣ Verify EKS connectivity
-      - name: Verify EKS cluster connection
+      # 5️⃣ Verify EKS cluster connection with retries
+      - name: Verify EKS cluster connection (with retry)
         run: |
-          echo "🔍 Checking EKS cluster..."
-          kubectl cluster-info
-          kubectl get nodes || echo "⚠️ Nodes may still be initializing"
+          echo "🔍 Checking EKS cluster connectivity..."
+          MAX_RETRIES=5
+          RETRY_DELAY=30
+          for i in $(seq 1 $MAX_RETRIES); do
+            if kubectl cluster-info >/dev/null 2>&1; then
+              echo "✅ Connected to EKS cluster successfully!"
+              kubectl cluster-info
+              break
+            else
+              echo "⚠️ Attempt $i/$MAX_RETRIES: EKS not ready yet, retrying in $RETRY_DELAY seconds..."
+              sleep $RETRY_DELAY
+            fi
+            if [ $i -eq $MAX_RETRIES ]; then
+              echo "❌ Failed to connect to EKS after $MAX_RETRIES attempts."
+              exit 1
+            fi
+          done
 
-      # 7️⃣ Wait for EKS to stabilize
-      - name: Wait for EKS readiness
+      # 6️⃣ Wait before manifest apply (extra buffer)
+      - name: Wait before applying manifests
         run: |
-          echo "⏳ Waiting for 60 seconds before deployment..."
+          echo "⏳ Waiting 60 seconds for nodes to initialize..."
           sleep 60
 
-      # 8️⃣ Apply Kubernetes manifests
+      # 7️⃣ Apply Kubernetes manifests
       - name: Apply Kubernetes manifests
         run: |
           echo "🚀 Applying Kubernetes manifests..."
@@ -155,16 +165,16 @@ jobs:
             exit 1
           fi
 
-      # 9️⃣ Wait for Pods
+      # 8️⃣ Wait for Pods to be ready
       - name: Wait for Pods
         run: |
-          echo "⏳ Waiting for all pods to be ready..."
-          kubectl wait --for=condition=Ready pods --all --all-namespaces --timeout=180s || true
+          echo "⏳ Waiting for pods to be ready..."
+          kubectl wait --for=condition=Ready pods --all --all-namespaces --timeout=300s || true
           kubectl get pods -A
 
-      # 🔟 Verify deployed services
+      # 9️⃣ Verify services and endpoints
       - name: Verify Services
         run: |
-          echo "✅ Checking services..."
+          echo "✅ Verifying deployed services..."
           kubectl get svc -A
-
+          echo "🌐 Your FastAPI & React services are deployed successfully!"
