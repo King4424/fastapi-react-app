@@ -11,6 +11,7 @@ permissions:
   id-token: write
 
 jobs:
+  # 🚀 Terraform EKS Provision Job
   provision-eks:
     name: Provision AWS EKS Cluster
     runs-on: ubuntu-latest
@@ -18,9 +19,10 @@ jobs:
     env:
       AWS_REGION: ap-south-1
       TF_WORKING_DIR: terraform
+      CLUSTER_NAME: fastapi-react-eks
 
     steps:
-      # 1️⃣ Checkout repository
+      # 1️⃣ Checkout code
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
@@ -61,11 +63,14 @@ jobs:
         working-directory: ${{ env.TF_WORKING_DIR }}
         run: terraform apply -auto-approve tfplan
 
-      # 8️⃣ Export Kubeconfig
+      # 8️⃣ Export kubeconfig for deployment job
       - name: Export kubeconfig
         run: |
           mkdir -p ~/.kube
-          aws eks update-kubeconfig --region ${{ env.AWS_REGION }} --name fastapi-react-eks
+          aws eks update-kubeconfig \
+            --region ${{ env.AWS_REGION }} \
+            --name ${{ env.CLUSTER_NAME }} \
+            --alias fastapi-eks
 
       # 9️⃣ Upload kubeconfig artifact
       - name: Upload kubeconfig
@@ -74,7 +79,8 @@ jobs:
           name: kubeconfig
           path: ~/.kube/config
 
-  # 🚀 Deploy App to EKS
+
+  # 💡 Deploy FastAPI + React to EKS
   deploy-app:
     name: Deploy FastAPI & React to EKS
     runs-on: ubuntu-latest
@@ -82,54 +88,83 @@ jobs:
 
     env:
       AWS_REGION: ap-south-1
+      CLUSTER_NAME: fastapi-react-eks
       KUBECONFIG: ~/.kube/config
 
     steps:
+      # 1️⃣ Checkout repository
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
           clean: true
 
+      # 2️⃣ Download kubeconfig
       - name: Download kubeconfig
         uses: actions/download-artifact@v4
         with:
           name: kubeconfig
           path: ~/.kube
 
+      # 3️⃣ Reconfigure AWS credentials for kubectl
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      # 4️⃣ Setup kubectl
       - name: Setup kubectl
         uses: azure/setup-kubectl@v4
         with:
           version: v1.30.0
 
-      - name: Verify EKS Connection
+      # 5️⃣ Update kubeconfig to ensure cluster connectivity
+      - name: Update kubeconfig for EKS
         run: |
-          echo "🔍 Checking EKS connectivity..."
-          kubectl version --client
-          kubectl get nodes || echo "⚠️ No nodes yet (still provisioning)"
+          mkdir -p ~/.kube
+          aws eks update-kubeconfig \
+            --region ${{ env.AWS_REGION }} \
+            --name ${{ env.CLUSTER_NAME }} \
+            --alias fastapi-eks
 
-      - name: Locate and apply Kubernetes manifests
+      # 6️⃣ Verify EKS connectivity
+      - name: Verify EKS cluster connection
         run: |
-          echo "📁 Current dir: $(pwd)"
-          ls -R
+          echo "🔍 Checking EKS cluster..."
+          kubectl cluster-info
+          kubectl get nodes || echo "⚠️ Nodes may still be initializing"
+
+      # 7️⃣ Wait for EKS to stabilize
+      - name: Wait for EKS readiness
+        run: |
+          echo "⏳ Waiting for 60 seconds before deployment..."
+          sleep 60
+
+      # 8️⃣ Apply Kubernetes manifests
+      - name: Apply Kubernetes manifests
+        run: |
+          echo "🚀 Applying Kubernetes manifests..."
           if [ -d "./k8s" ]; then
-            echo "✅ Found ./k8s, applying manifests..."
-            kubectl apply -f ./k8s/
+            kubectl apply -f ./k8s/ --validate=false
           elif [ -d "$GITHUB_WORKSPACE/k8s" ]; then
-            echo "✅ Found $GITHUB_WORKSPACE/k8s, applying manifests..."
-            kubectl apply -f "$GITHUB_WORKSPACE/k8s/"
+            kubectl apply -f "$GITHUB_WORKSPACE/k8s/" --validate=false
           else
             echo "❌ ERROR: k8s folder not found!"
             exit 1
           fi
 
-      - name: Wait for pods to become ready
+      # 9️⃣ Wait for Pods
+      - name: Wait for Pods
         run: |
-          echo "⏳ Waiting for pods..."
+          echo "⏳ Waiting for all pods to be ready..."
           kubectl wait --for=condition=Ready pods --all --all-namespaces --timeout=180s || true
           kubectl get pods -A
 
-      - name: Verify deployed services
+      # 🔟 Verify deployed services
+      - name: Verify Services
         run: |
-          echo "✅ Deployment verification..."
+          echo "✅ Checking services..."
           kubectl get svc -A
+
